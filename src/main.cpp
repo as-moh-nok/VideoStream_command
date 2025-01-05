@@ -1,3 +1,4 @@
+/*lib : async-mqtt-client-0.9.0, pubsub*/
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "Recorder.h"
@@ -10,6 +11,9 @@
 #include "esp_vfs_fat.h"
 // capture photos
 #include <CapturePhoto.h>
+#include <SerialBLT.h>
+#include "MQTTManager.h"
+#include "WifiManager.h"
 
 #include <EEPROM.h>
 
@@ -19,6 +23,13 @@ const uint8_t LedPin = 33;
 const uint32_t MaxFramesPerFile = 200;
 const uint32_t WarmUpFrames = 30;
 char fileName[64];
+
+const char WIFI_SSID[]      = "hwa";
+const char WIFI_PASS[]      = "wifi1373";
+
+const char MQTT_BROKER[]    = "broker.emqx.io";
+const uint16_t MQTT_PORT    = 1883;
+const char MQTT_CLIENT_ID[] = "My-IoT-Device";
 
 typedef enum
 {
@@ -37,8 +48,11 @@ String command;
 camera_fb_t *fb;
 char tempStr[40];
 
+ BluetoothSerial SerialBT;  // Declare globally
+
 static esp_err_t init_sdcard(void);
 void saveFrameTask(void *pvParams);
+void commandState(String command);
 
 void setup()
 {
@@ -64,6 +78,11 @@ void setup()
 
     Recorder_init();
 
+    BLTbegin(); //  initialize  bluetooth
+    // Initialize MQTT connection
+    setupWifi(WIFI_SSID, WIFI_PASS);
+    setupMqtt(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+    
     xTaskCreatePinnedToCore(
         saveFrameTask,   // Task Function
         "SaveFrameTask", // Task Name
@@ -77,26 +96,30 @@ void setup()
 
 void loop()
 {
+    //loopMqtt();  // Handle incoming MQTT messages
+   
+        // Process incoming MQTT command
+    if (mqttCommand != "") {
+        Serial.println("Handling MQTT command...");
+        commandState(mqttCommand);
+        mqttCommand = "";  // Clear the command after handling
+    }
+
+    //if(BLTreadCommand() != "")
+    if (SerialBT.available()) {
+    command = SerialBT.readStringUntil('\n');
+    command.trim();
+    //Serial.println("Received: " + command);
+    commandState(command);
+    }
+
     if (Serial.available())
     {
         command = Serial.readStringUntil('\n'); // read serial input
-
-        if (command == "start-record")
-        {
-            recordState = RecordState_CreateFile;
-            Serial.println("Recording started");
-        }
-        else if (command == "stop-record")
-        {
-            recordState = RecordState_CloseFile;
-            Serial.println("Recording stopped");
-        }
-        else if (command == "capture")
-        {
-            recordState = RecordState_Capture;
-            Serial.println("Capturing frame");
-        }
+        commandState(command);
     }
+    
+
     vTaskDelay(10 / portTICK_PERIOD_MS); // Yield to other tasks
 }
 
@@ -135,6 +158,12 @@ void saveFrameTask(void *pvParams)
             // record video
             while (avi.FramesCount < MaxFramesPerFile)
             {
+                if (recordState != RecordState_Recording)
+                {
+                     recordState = RecordState_CloseFile;  // Stop recording immediately
+                     break;
+                }
+
                 camera_fb_t *fb = Recorder_getFrame();
                 if (fb)
                 {
@@ -231,4 +260,23 @@ static esp_err_t init_sdcard(void)
         Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s", esp_err_to_name(ret));
     }
     return ret;
+}
+
+void commandState(String command)
+{
+if (command == "start-record")
+    {
+        recordState = RecordState_CreateFile;
+        Serial.println("Recording started");
+    }
+    else if (command == "stop-record")
+    {
+        recordState = RecordState_CloseFile;
+        Serial.println("Recording stopped");
+    }
+    else if (command == "capture")
+    {
+        recordState = RecordState_Capture;
+        Serial.println("Capturing frame");
+    }
 }
