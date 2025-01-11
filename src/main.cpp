@@ -42,6 +42,8 @@ typedef enum
 
 Avi avi;
 TaskHandle_t saveTaskHandle;
+TaskHandle_t wifiTaskHandle;
+
 RecordState recordState;
 uint64_t elapsedTime;
 String command;
@@ -52,6 +54,8 @@ char tempStr[40];
 
 static esp_err_t init_sdcard(void);
 void saveFrameTask(void *pvParams);
+void setupWifiMQTT_Task(void *parameter);
+
 void commandState(String command);
 
 void setup()
@@ -79,9 +83,19 @@ void setup()
     Recorder_init();
 
     BLTbegin(); //  initialize  bluetooth
-    // Initialize MQTT connection
-    setupWifi(WIFI_SSID, WIFI_PASS);
-    setupMqtt(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
+
+
+        // Start WiFi and MQTT in a new task
+    xTaskCreatePinnedToCore(
+        setupWifiMQTT_Task,
+        "WiFiMQTTTask",
+        8192,
+        NULL,
+        1,
+        &wifiTaskHandle,
+        1  // Core 1 for networking
+    );
+
     
     xTaskCreatePinnedToCore(
         saveFrameTask,   // Task Function
@@ -121,6 +135,12 @@ void loop()
     
 
     vTaskDelay(10 / portTICK_PERIOD_MS); // Yield to other tasks
+}
+
+void setupWifiMQTT_Task(void *parameter)
+{
+    setupWifi(WIFI_SSID, WIFI_PASS);
+    setupMqtt(MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID);
 }
 
 void saveFrameTask(void *pvParams)
